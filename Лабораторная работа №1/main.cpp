@@ -11,103 +11,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <vector>
-
-#include "Products.cpp"
+#include <fstream>
+#include "Product.hpp"
+#include "CreateFiles.hpp"
 
 using namespace std;
 
-void askManToPutMoney(int file, int &money) {
-    int amountToPut;
-    cout << "Положите немного денег (например, 5 рублей):" << endl;
-    while (1) {
-        cin >> amountToPut;
-        if (amountToPut > money) {
-            cout << "У Вас не хватает денег на счёте. Ваш счёт - " << money << " рублей. Повторите снова:" << endl;
-        }
-        else {
-            money -= amountToPut;
-            break;
-        }
-    }
-    
-    FILE *stream;
-    stream = fdopen (file, "w");
-    fprintf (stream, "%d", amountToPut);
-    fclose (stream);
-}
-
-void showAmountOfMoneyInVendingMachine(int file, int &money) {
-    int m = 0;
-    FILE *stream;
-    stream = fdopen (file, "r");
-    
-    fscanf(stream, "%d", &m);
-    
-    fclose (stream);
-    
-    cout << "Вы положили " << m << " рублей." << endl;
-    
-    money -= m;
-}
-
-void chooseProduct(int file, vector<Product> &products) {
-    int money;
-    
-    FILE *stream;
-    
-    stream = fdopen (file, "r");
-    fscanf(stream, "%d", &money);
-    
-    fclose (stream);
-    
-    while (1) {
-        for (int i = 0; i < products.size(); i++) {
-            products[i].BuyThis(money);
-        }
-        cout << "Хотите ли вы продолжить покупки (y/n)?" << endl;
-        
-        char c;
-        cin >> c;
-        if (c != 'y') {
-            return;
-        }
-    }
-}
+MySpace s;
 
 int main(void) {
-    Product cola(10, 2, "Кока Кола");
-    Product cashew(6, 4, "Кешью");
-    Product water(12, 1, "Вода");
-    Product snickers(8, 2, "Сникерс");
-    Product fanta(9, 2, "Фанта");
-    
-    vector<Product> products;
-    products.push_back(cola);
-    products.push_back(cashew);
-    products.push_back(water);
-    products.push_back(snickers);
-    products.push_back(fanta);
-    
-    int money = 15;
-    int myPipe[2];
-    
-    if (pipe (myPipe)) {
-        fprintf (stderr, "Pipe failed.\n");
-        return EXIT_FAILURE;
+    //Создаём файлы сохранения, если они ещё не созданы
+    cout << "Вы хотите создать файлы с деньгами и продуктами (y/n)?" << endl;
+    char c;
+    cin >> c;
+    if (c == 'y') {
+        s.createFiles();
     }
     
+    //А здесь уже идёт работа с процессами
     pid_t process;
     process = fork();
     if (process == 0) {
         //Мы в дочернем процессе
-        close(myPipe[0]);
-        askManToPutMoney(myPipe[1], money);
-        
-        
-        
+        s.askManToPutMoney();
         
         return EXIT_SUCCESS;
     }
@@ -115,17 +42,39 @@ int main(void) {
         fprintf (stderr, "Fork failed.\n");
         return EXIT_FAILURE;
     }
-    else {
-        //Родительский процесс
-        wait(NULL);
-        close(myPipe[1]);
+    //Родительский процесс
+    waitpid(process, NULL, NULL);
+    s.showAmountOfMoneyInVendingMachine();
+    s.showProducts();
+    
+    process = fork();
         
-        chooseProduct(myPipe[0], products);
+    if (process == 0) {
+        //Мы опять в дочернем процессе, только уже в новом дочернем
+        s.askManToEnterProducts();
         
-        
-        
-        return  EXIT_SUCCESS;
+        return EXIT_SUCCESS;
     }
+    else if (process < 0) {
+        fprintf (stderr, "Fork failed.\n");
+        return EXIT_FAILURE;
+    }
+    waitpid(process, NULL, NULL);
+    s.performOrder();
+    
+    process = fork();
+    
+    if (process == 0) {
+        //Мы опять в дочернем процессе, но здесь мы выведем информацию о продуктах, которые были успешно куплены, а также оставшиеся деньги
+        s.showPurchases();
+        
+        return EXIT_SUCCESS;
+    }
+    else if (process < 0) {
+        fprintf (stderr, "Fork failed.\n");
+        return EXIT_FAILURE;
+    }
+    
     
     return 0;
 }
