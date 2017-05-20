@@ -118,8 +118,18 @@ public:
     Module createDirectory(int position) {
         Module m;
         
-        cout << "Введите название новой директории: " << endl;
-        cin >> m.name;
+        cout << "Введите название новой директории (до 20 символов): " << endl;
+        string str;
+        cin >> str;
+        
+        for (int i = 0; i < str.length(); i++) {
+            m.name[i] = str[i];
+        }
+        m.name[19] = '\0';
+        
+        for (int i = (int)str.length(); i < 20; i++) {
+            m.name[i] = '\0';
+        }
         
         m.type = directory;
         m.position = position;
@@ -131,10 +141,30 @@ public:
         Module m;
         
         cout << "Введите название нового файла (до 20 символов): " << endl;
-        cin >> m.name;
+        string str;
+        cin >> str;
+        
+        for (int i = 0; i < 19; i++) {
+            m.name[i] = str[i];
+        }
+        m.name[19] = '\0';
+        
+        for (int i = (int)str.length(); i < 19; i++) {
+            m.name[i] = '\0';
+        }
         
         cout << "Введите расширение (до 5 символов): " << endl;
-        cin >> m.extension;
+        cin >> str;
+        
+        for (int i = 0; i < 4; i++) {
+            m.extension[i] = str[i];
+        }
+        
+        m.extension[4] = '\0';
+        
+        for (int i = (int)str.length(); i < 4; i++) {
+            m.extension[i] = '\0';
+        }
         
         m.type = file;
         
