@@ -32,6 +32,12 @@ struct Module {
     int position;
     // Размер файла (количество символов в нём)
     int fileSize;
+    
+    Module() {
+        position = 0;
+        fileSize = 0;
+    }
+    
 };
 
 // Структура, которая описывает модуль, хранящий количество элементов в директории и индекс предыдущей папки
@@ -57,6 +63,17 @@ public:
             return;
         }
         
+    }
+    
+    void reopenFile() {
+        // Открываем файл в бинарном режиме для чтения/записи
+        stream.open(this->diskName, ios_base::in | ios_base::out | ios_base::binary);
+        
+        // Проверка на открытие
+        if (!stream.is_open()) {
+            cout << "Не могу открыть файл!" << endl;
+            return;
+        }
     }
     
     void quit() {
@@ -94,8 +111,8 @@ public:
     
     // Узнаёт размер файла
     int getFileSize() {
-        stream.seekg(0, ios::end);
-        return (int)stream.tellg();
+        this->stream.seekp(0, ios::end);
+        return (int)(this->stream.tellp());
     }
     
     Module createDirectory(int position) {
@@ -212,7 +229,9 @@ public:
                 }
             }
             
-            goThrough += m.fileSize;
+            if (m.type == file) {
+                goThrough += m.fileSize;
+            }
             
         }
         
@@ -235,12 +254,12 @@ public:
     
     // Осуществляет сдвиг всех данных в файле влево на размер одного char начиная с указанной точки
     void shiftLeftOnChar(int beginning, int offset) {
-        for (int i = beginning + 52; i < getFileSize(); i++) {
+        for (int i = beginning + offset; i < getFileSize(); i++) {
             char c;
             stream.seekg(i, ios::beg);
             stream.read(reinterpret_cast<char*>(&c), sizeof(char));
             
-            stream.seekp(i - 52, ios::beg);
+            stream.seekp(i - offset, ios::beg);
             stream.write(reinterpret_cast<char*>(&c), sizeof(char));
         }
     }
@@ -356,8 +375,89 @@ public:
         
     }
     
+    // Удаляет пустую директорию
+    void deleteBlockOfOffsetSize(int placeToStartDeleting, int offset) {
+        // Для начала требуется переписать адреса
+        int startPoint = sizeof(int);
+        AmountAndPreviousPosition temp;
+        Module m;
+        
+        // Пока не дошли до конца файла
+        while (startPoint < getFileSize()) {
+            stream.seekg(startPoint, ios::beg);
+            stream.read(reinterpret_cast<char*>(&temp), sizeof(AmountAndPreviousPosition));
+            
+            if (temp.previousPosition >= placeToStartDeleting) {
+                temp.previousPosition -= offset;
+                
+                // Записываем изменения в файл
+                stream.seekp(startPoint, ios::beg);
+                stream.write(reinterpret_cast<char*>(&temp), sizeof(AmountAndPreviousPosition));
+            }
+            
+            startPoint += sizeof(AmountAndPreviousPosition) - sizeof(Module);
+            for (int i = 0; i < temp.amount; i++) {
+                startPoint += sizeof(Module);
+                
+                // Считали модуль
+                stream.seekg(startPoint, ios::beg);
+                stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+                
+                // Если это директория и адрес, на который она указывает, стоит дальше, чем точка, в которую мы будем писать
+                if (m.type == directory && m.position >= placeToStartDeleting) {
+                    // То тогда изменяем этот адрес на размер директории
+                    m.position -= offset;
+                    
+                    // Записываем изменения в файл
+                    stream.seekp(startPoint, ios::beg);
+                    stream.write(reinterpret_cast<char*>(&m), sizeof(Module));
+                    
+                    continue;
+                    
+                }
+                
+                if (m.type == file) {
+                    startPoint += m.fileSize;
+                }
+                
+            }
+            
+            startPoint += sizeof(Module);
+            
+        }
+        
+        // Сместили содержимое диска влево на количество удаляемых байт
+        shiftLeftOnChar(placeToStartDeleting, offset);
+        
+        int newSize = getFileSize();
+        
+        stream.close();
+        
+        // Обрезаем файл
+        FILE *f;
+        try {
+            if(!(f=fopen(this->diskName, "ab"))) throw 2;
+        }
+        catch(int) {
+            cout << "Не могу открыть файл для обрезки!" << endl;
+            return;
+        }
+        
+        ftruncate(fileno(f), newSize - offset);
+        fclose(f);
+        
+        // Открываем файл в бинарном режиме для чтения/записи
+        stream.open(this->diskName, ios_base::in | ios_base::out | ios_base::binary);
+        
+        // Проверка на открытие
+        if (!stream.is_open()) {
+            cout << "Не могу открыть файл!" << endl;
+            return;
+        }
+    }
+    
     // Удаляет модуль с диска
-    void deleteModule(int beginning, moduleType whatToDelete) {
+    void deleteModule(int beginning, moduleType whatToDelete, string name, string ext) {
         // Здесь будем хранить информацию о количестве элементов и предыдущей папке
         AmountAndPreviousPosition pAa;
         // Стали на нужную позицию в файле
@@ -370,14 +470,6 @@ public:
         
         // Если нужно удалить файл
         if (whatToDelete == file) {
-            string show;
-            cout << "Введите название файла, который вы хотите удалить:" << endl;
-            cin >> show;
-            
-            string ext;
-            cout << "Введите расширение файла, который вы хотите удалить:" << endl;
-            cin >> ext;
-            
             Module m;
             int goThrough = beginning - sizeof(Module);
             // Начинаем поиск этого файла
@@ -391,7 +483,7 @@ public:
                 // Если мы нашли файл
                 if (m.type == file) {
                     // И если имя и расширение этого файла совпадают с тем, что нужно удалить
-                    if (strcmp(m.name, show.c_str()) == 0 && strcmp(m.extension, ext.c_str()) == 0) {
+                    if (strcmp(m.name, name.c_str()) == 0 && strcmp(m.extension, ext.c_str()) == 0) {
                         // Получили количество записанной информации
                         int previousSize;
                         
@@ -418,7 +510,9 @@ public:
                         return;
                     }
                     
-                    goThrough += m.fileSize;
+                    if (m.type == file) {
+                        goThrough += m.fileSize;
+                    }
                     
                 }
                 
@@ -428,6 +522,59 @@ public:
             
         // В случае удаления директории
         } else {
+            Module m;
+            int goThrough = beginning - sizeof(Module);
+            // Начинаем поиск этого файла
+            for (int i = 0; i < pAa.amount; i++) {
+                goThrough += sizeof(Module);
+                // Поставили курсор на i-ый модуль
+                stream.seekg(goThrough);
+                // Считали модуль
+                stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+                
+                // Если мы нашли директорию
+                if (m.type == directory) {
+                    // И если имя директории совпадает с тем, что нужно удалить
+                    if (strcmp(m.name, name.c_str()) == 0) {
+                        AmountAndPreviousPosition temp;
+                        stream.seekg(m.position, ios::beg);
+                        stream.read(reinterpret_cast<char*>(&temp), sizeof(AmountAndPreviousPosition));
+                        
+                        // Если директория пустая, то удаляем её
+                        if (temp.amount == 0) {
+                            // Удаляем дескриптор директории с диска
+                            deleteBlockOfOffsetSize(m.position, sizeof(AmountAndPreviousPosition));
+                            
+                            // Удаляем директорию с диска
+                            deleteBlockOfOffsetSize(goThrough, sizeof(Module));
+                            
+                            // Уменьшили счётчик содержимого директории на 1
+                            pAa.amount -= 1;
+                            
+                            // Записали изменения на диск
+                            stream.seekp(beginning - sizeof(AmountAndPreviousPosition), ios::beg);
+                            stream.write(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
+                            
+                            return;
+                            
+                        } else {
+                            cout << "Директория не пустая! Удаление невозможно!" << endl;
+                            
+                            return;
+                            
+                        }
+                        
+                    }
+                    
+                }
+                
+                if (m.type == file) {
+                    goThrough += m.fileSize;
+                }
+                
+            }
+            
+            cout << "Такой директории нет!" << endl;
             
         }
         
@@ -521,10 +668,9 @@ public:
             // Считали модуль
             stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
             
-            goThrough += m.fileSize;
-            
             if (m.type == file) {
                 sizeToReturn += m.fileSize;
+                goThrough += m.fileSize;
             }
             
         }
@@ -533,8 +679,8 @@ public:
         
     }
     
-    // Осуществляет добавление нового элемента на диск
-    void writeToDirectory(int beginning, moduleType whatToCreate) {
+    // Удаляет все файлы в заданной директории
+    void deleteAllFilesInDirectory(int beginning) {
         // Здесь будем хранить информацию о количестве элементов и предыдущей папке
         AmountAndPreviousPosition pAa;
         // Стали на нужную позицию в файле
@@ -542,8 +688,177 @@ public:
         // Считали информацию
         stream.read(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
         
+        // Стали на начало модулей
+        beginning += sizeof(AmountAndPreviousPosition);
+        
+        // Удаляем все файлы из директории
+        Module m;
+        
+        int amount = pAa.amount;
+        
+        int goThrough = beginning - sizeof(Module);
+        for (int i = 0; i < amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            if (m.type == file) {
+                deleteModule(beginning - sizeof(AmountAndPreviousPosition), file, m.name, m.extension);
+                amount -= 1;
+                
+                if (amount > 0 && i + 1 == amount) {
+                    i -= 1;
+                    goThrough -= sizeof(Module);
+                }
+                
+            }
+            
+        }
+        
+        // Теперь начнём удалять содержимое из директорий, которые находятся внутри текущей директории
+        goThrough = beginning - sizeof(Module);
+        for (int i = 0; i < amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            if (m.type == directory) {
+                deleteAllFilesInDirectory(m.position);
+                
+            }
+            
+        }
+        
+        // Теперь начнём удалять сами директории
+        goThrough = beginning - sizeof(Module);
+        for (int i = 0; i < amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            if (m.type == directory) {
+                deleteModule(beginning - sizeof(AmountAndPreviousPosition), directory, m.name, "");
+                
+                amount -= 1;
+                
+                if (amount > 0 && i + 1 == amount) {
+                    i -= 1;
+                    goThrough -= sizeof(Module);
+                }
+                
+            }
+            
+        }
+        
+    }
+    
+    // Удаляем директорию и её содержимое
+    void deleteDirectoryWithContent(int beginning, string toDelete) {
+        // Здесь будем хранить информацию о количестве элементов и предыдущей папке
+        AmountAndPreviousPosition pAa;
+        // Стали на нужную позицию в файле
+        stream.seekg(beginning, ios::beg);
+        // Считали информацию
+        stream.read(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
+        
+        // Стали на начало модулей
+        beginning += sizeof(AmountAndPreviousPosition);
+        
+        Module m;
+        int goThrough = beginning - sizeof(Module);
+        for (int i = 0; i < pAa.amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            if (m.type == directory && strcmp(m.name, toDelete.c_str()) == 0) {
+                deleteAllFilesInDirectory(m.position);
+                
+                deleteModule(beginning - sizeof(AmountAndPreviousPosition), directory, m.name, "");
+                
+                return;
+                
+            }
+            
+            if (m.type == file) {
+                goThrough += m.fileSize;
+                
+            }
+            
+        }
+        
+        cout << "Такой директории нет!" << endl;
+        
+    }
+    
+    bool isUnique(int beginning, moduleType howToCheck, Module whatToCheck) {
+        // Здесь будем хранить информацию о количестве элементов и предыдущей папке
+        AmountAndPreviousPosition pAa;
+        // Стали на нужную позицию в файле
+        stream.seekg(beginning, ios::beg);
+        // Считали информацию
+        stream.read(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
+        
+        // Стали на начало модулей
+        beginning += sizeof(AmountAndPreviousPosition);
+        
+        Module m;
+        int goThrough = beginning - sizeof(Module);
+        // Начинаем поиск этого файла
+        for (int i = 0; i < pAa.amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            // Если мы нашли файл
+            if (m.type == file) {
+                // И если имя и расширение этого файла совпали
+                if (strcmp(m.name, whatToCheck.name) == 0 && strcmp(m.extension, whatToCheck.extension) == 0 && howToCheck == file) {
+                    return false;
+                }
+                
+                if (m.type == file) {
+                    goThrough += m.fileSize;
+                }
+                
+            } else {
+                // И если имя и расширение этого файла совпали
+                if (strcmp(m.name, whatToCheck.name) == 0 && howToCheck == directory) {
+                    return false;
+                }
+            }
+            
+        }
+        
+        return true;
+        
+    }
+    
+    // Осуществляет добавление нового элемента на диск
+    void writeToDirectory(int beginning, moduleType whatToCreate) {
+        int s = getFileSize();
+        
+        // Здесь будем хранить информацию о количестве элементов и предыдущей папке
+        AmountAndPreviousPosition pAa;
+        // Стали на нужную позицию в файле
+        stream.seekg(beginning, ios::beg);
+        // Считали информацию
+        stream.read(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
+        
+        int check = beginning + sizeof(AmountAndPreviousPosition) + getSizeOfAllFilesInDirectory(beginning) + (pAa.amount * sizeof(Module));
+        
         // Если мы стоим в конце наших записей на диске
-        if (beginning + sizeof(AmountAndPreviousPosition) + getSizeOfAllFilesInDirectory(beginning) + (pAa.amount * sizeof(Module)) == getFileSize()) {
+        if (check == s) {
             // Если нужно создать директорию, то переходим к созданию директории
             if (whatToCreate == directory) {
                 // Для создания директории создаём модуль, описывающий её содержимое
@@ -558,6 +873,14 @@ public:
                 Module m;
                 // В качестве параметра передаём адрес, на который будет указывать директория
                 m = createDirectory(beginning + sizeof(AmountAndPreviousPosition) + (pAa.amount + 1) * sizeof(Module) + getSizeOfAllFilesInDirectory(beginning));
+                
+                
+                if (isUnique(beginning, directory, m) == false) {
+                    cout << "Не могу создать директорию, т.к. директория с таким именем существует! Попробуйте ещё раз." << endl;
+                    return;
+                    
+                }
+                
                 
                 // Записали директорию на диск
                 stream.seekp(0, ios::end);
@@ -576,16 +899,17 @@ public:
                 
             // В противном случае переходим к созданию файла
             } else {
-                // Увеличиваем счётчик количества модулей на 1
-                pAa.amount += 1;
-                
-                // Записали изменения в файл
-                stream.seekg(beginning);
-                stream.write(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
-                
                 // Создаём файл
                 Module m;
                 m = createFile();
+                
+                
+                if (isUnique(beginning, file, m) == false) {
+                    cout << "Не могу создать файл, т.к. файл с таким именем существует! Попробуйте ещё раз." << endl;
+                    return;
+                    
+                }
+                
                 
                 cout << "Введите содержимое файла:" << endl;
                 getchar();
@@ -605,6 +929,13 @@ public:
                     stream.seekp(0, ios::end);
                     stream.write(reinterpret_cast<char*>(&c), sizeof(char));
                 }
+                
+                // Увеличиваем счётчик количества модулей на 1
+                pAa.amount += 1;
+                
+                // Записали изменения в файл
+                stream.seekg(beginning);
+                stream.write(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
                 
                 // Получили количество записанной информации
                 int previousSize;
@@ -629,13 +960,31 @@ public:
             
             // Если нужно создать директорию
             if (whatToCreate == directory) {
+                // Создаём директорию, которую запишем в файл
+                Module newDirectory;
+                newDirectory = createDirectory(getFileSize() + sizeof(Module));
+                
+                
+                if (isUnique(beginning, directory, newDirectory) == false) {
+                    cout << "Не могу создать директорию, т.к. директория с таким именем существует! Попробуйте ещё раз." << endl;
+                    return;
+                    
+                }
+                
+                
                 // Для начала требуется переписать адреса
                 int startPoint = sizeof(int);
                 AmountAndPreviousPosition temp;
                 Module m;
                 
+                int size = getFileSize();
+                if (size < 0) {
+                    cout << "Не могу создать директорию!" << endl;
+                    return;
+                }
+                
                 // Пока не дошли до конца файла
-                while (startPoint < getFileSize()) {
+                while (startPoint < size) {
                     stream.seekg(startPoint, ios::beg);
                     stream.read(reinterpret_cast<char*>(&temp), sizeof(AmountAndPreviousPosition));
                     
@@ -668,7 +1017,9 @@ public:
                             
                         }
                         
-                        startPoint += m.fileSize;
+                        if (m.type == file) {
+                            startPoint += m.fileSize;
+                        }
                         
                     }
                     
@@ -683,10 +1034,6 @@ public:
                 }
                 
                 whereToWrite -= sizeof(Module);
-                
-                // Создаём директорию. которую запишем в файл
-                Module newDirectory;
-                newDirectory = createDirectory(getFileSize());
                 
                 // Записали директорию на диск
                 stream.seekp(whereToWrite, ios::beg);
@@ -707,6 +1054,14 @@ public:
                 Module newFile;
                 newFile = createFile();
                 
+                
+                if (isUnique(beginning, file, newFile) == false) {
+                    cout << "Не могу создать файл, т.к. файл с таким именем существует! Попробуйте ещё раз." << endl;
+                    return;
+                    
+                }
+                
+                
                 string contentOfTheNewFile;
                 cout << "Введите содержимое файла:" << endl;
                 getchar();
@@ -722,8 +1077,14 @@ public:
                 AmountAndPreviousPosition temp;
                 Module m;
                 
+                int size = getFileSize();
+                if (size < 0) {
+                    cout << "Не могу создать файл!" << endl;
+                    return;
+                }
+                
                 // Пока не дошли до конца файла
-                while (startPoint < getFileSize()) {
+                while (startPoint < size) {
                     stream.seekg(startPoint, ios::beg);
                     stream.read(reinterpret_cast<char*>(&temp), sizeof(AmountAndPreviousPosition));
                     
@@ -756,7 +1117,9 @@ public:
                             
                         }
                         
-                        startPoint += m.fileSize;
+                        if (m.type == file) {
+                            startPoint += m.fileSize;
+                        }
                         
                     }
                     
