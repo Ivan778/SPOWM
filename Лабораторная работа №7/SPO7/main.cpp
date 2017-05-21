@@ -101,6 +101,28 @@ int main(int argc, const char * argv[]) {
             
         }
         
+        // Переименовать файл
+        if (cmd == "rf") {
+            string name;
+            cout << "Введите название файла, который вы хотите переименовать:" << endl;
+            cin >> name;
+            
+            string ext;
+            cout << "Введите расширение файла, который вы хотите переименовать:" << endl;
+            cin >> ext;
+            
+            w.renameFile(toGo, name, ext);
+        }
+        
+        // Переименовать директорию
+        if (cmd == "rd") {
+            string name;
+            cout << "Введите название директории, которую вы хотите переименовать:" << endl;
+            cin >> name;
+            
+            w.renameDirectory(toGo, name);
+        }
+        
         // Удалить пустую директорию
         if (cmd == "rmdir") {
             string name;
@@ -130,8 +152,9 @@ int main(int argc, const char * argv[]) {
             
         }
         
+        // Показать количество реально занятого пространства на диске
         if (cmd == "gfs") {
-            cout << w.getFileSize() << endl;
+            cout << "Реально занятое пространство (включая дескрипторы файлов и папок) - " << w.getFileSize() << " байт"  << endl;
         }
         
     }

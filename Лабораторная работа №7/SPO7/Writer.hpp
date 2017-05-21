@@ -19,6 +19,7 @@ const int STORAGE_SIZE = 8000;
 
 // Типы модулей
 enum moduleType { file, directory };
+enum createMode { newFileMode, renameFileMode };
 
 // Структура, которая описывает каждый элемент диска
 struct Module {
@@ -137,10 +138,15 @@ public:
         return m;
     }
     
-    Module createFile() {
+    Module createFile(createMode mode) {
         Module m;
         
-        cout << "Введите название нового файла (до 20 символов): " << endl;
+        if (mode == newFileMode) {
+            cout << "Введите название нового файла (до 20 символов): " << endl;
+        } else {
+            cout << "Введите новое имя файла (до 20 символов): " << endl;
+        }
+        
         string str;
         cin >> str;
         
@@ -153,7 +159,11 @@ public:
             m.name[i] = '\0';
         }
         
-        cout << "Введите расширение (до 5 символов): " << endl;
+        if (mode == newFileMode) {
+            cout << "Введите расширение нового файла (до 20 символов): " << endl;
+        } else {
+            cout << "Введите новое расширение файла (до 20 символов): " << endl;
+        }
         cin >> str;
         
         for (int i = 0; i < 4; i++) {
@@ -173,7 +183,7 @@ public:
     
     void showModule(Module m) {
         if (m.type == file) {
-            cout << m.name << "." << m.extension << " - файл" << endl;
+            cout << m.name << "." << m.extension << " (" << m.fileSize << "/" << m.fileSize + sizeof(Module) << " байт)" << " - файл" << endl;
         } else {
             cout << m.name << " - папка" << endl;
         }
@@ -617,7 +627,7 @@ public:
         stream.seekg(0, ios::beg);
         stream.read(reinterpret_cast<char*>(&currentUse), sizeof(int));
         
-        cout << "Занято " << currentUse << " из " << STORAGE_SIZE << " байт." << endl;
+        cout << "Занято " << currentUse << "/" << getFileSize() << " из " << STORAGE_SIZE << " байт." << endl;
         
     }
     
@@ -788,6 +798,64 @@ public:
         
     }
     
+    // Переименовывает файлы
+    void renameFile(int beginning, string name, string extension) {
+        // Здесь будем хранить информацию о количестве элементов и предыдущей папке
+        AmountAndPreviousPosition pAa;
+        // Стали на нужную позицию в файле
+        stream.seekg(beginning, ios::beg);
+        // Считали информацию
+        stream.read(reinterpret_cast<char*>(&pAa), sizeof(AmountAndPreviousPosition));
+        
+        // Стали на начало модулей
+        beginning += sizeof(AmountAndPreviousPosition);
+        
+        Module m;
+        int goThrough = beginning - sizeof(Module);
+        for (int i = 0; i < pAa.amount; i++) {
+            goThrough += sizeof(Module);
+            // Поставили курсор на i-ый модуль
+            stream.seekg(goThrough);
+            // Считали модуль
+            stream.read(reinterpret_cast<char*>(&m), sizeof(Module));
+            
+            if (m.type == file && strcmp(m.name, name.c_str()) == 0 && strcmp(m.extension, extension.c_str()) == 0) {
+                Module m1;
+                m1 = createFile(renameFileMode);
+                
+                // Если имя файла уникальное
+                if (isUnique(beginning - sizeof(AmountAndPreviousPosition), file, m1) == true) {
+                    strcpy(m.name, m1.name);
+                    strcpy(m.extension, m1.extension);
+                    
+                    // Поставили курсор в позицию для записи
+                    stream.seekp(goThrough);
+                    // Записали обновлённый модуль
+                    stream.write(reinterpret_cast<char*>(&m), sizeof(Module));
+                    
+                    return;
+                    
+                } else {
+                    cout << "Такое имя уже существует!" << endl;
+                    return;
+                }
+                
+            }
+            
+            if (m.type == file) {
+                goThrough += m.fileSize;
+                
+            }
+            
+        }
+        
+        cout << "Такого файла нет!" << endl;
+    }
+    
+    void renameDirectory(int beginning, string name) {
+        
+    }
+    
     // Удаляем директорию и её содержимое
     void deleteDirectoryWithContent(int beginning, string toDelete) {
         // Здесь будем хранить информацию о количестве элементов и предыдущей папке
@@ -891,6 +959,11 @@ public:
         if (check == s) {
             // Если нужно создать директорию, то переходим к созданию директории
             if (whatToCreate == directory) {
+                if (STORAGE_SIZE - getFileSize() < sizeof(Module) + sizeof(AmountAndPreviousPosition)) {
+                    cout << "Не хватает места для создания директории!" << endl;
+                    return;
+                }
+                
                 // Для создания директории создаём модуль, описывающий её содержимое
                 AmountAndPreviousPosition newDirectoryInfo;
                 
@@ -904,13 +977,11 @@ public:
                 // В качестве параметра передаём адрес, на который будет указывать директория
                 m = createDirectory(beginning + sizeof(AmountAndPreviousPosition) + (pAa.amount + 1) * sizeof(Module) + getSizeOfAllFilesInDirectory(beginning));
                 
-                
                 if (isUnique(beginning, directory, m) == false) {
                     cout << "Не могу создать директорию, т.к. директория с таким именем существует! Попробуйте ещё раз." << endl;
                     return;
                     
                 }
-                
                 
                 // Записали директорию на диск
                 stream.seekp(0, ios::end);
@@ -929,10 +1000,14 @@ public:
                 
             // В противном случае переходим к созданию файла
             } else {
+                if (STORAGE_SIZE - getFileSize() <= sizeof(Module)) {
+                    cout << "Не хватает места для создания файла!" << endl;
+                    return;
+                }
+                
                 // Создаём файл
                 Module m;
-                m = createFile();
-                
+                m = createFile(newFileMode);
                 
                 if (isUnique(beginning, file, m) == false) {
                     cout << "Не могу создать файл, т.к. файл с таким именем существует! Попробуйте ещё раз." << endl;
@@ -940,11 +1015,20 @@ public:
                     
                 }
                 
-                
                 cout << "Введите содержимое файла:" << endl;
                 getchar();
                 string content;
                 getline(cin, content);
+                
+                if (STORAGE_SIZE - getFileSize() < sizeof(Module) + content.length()) {
+                    cout << "Не хватает места для создания файла! Файл будет обрезан." << endl;
+                    
+                    while (content.length() > STORAGE_SIZE - getFileSize() - sizeof(Module)) {
+                        content.pop_back();
+                    }
+                    
+                }
+                
                 m.fileSize = (int)content.length();
                 
                 // Записали файл на диск
@@ -985,6 +1069,12 @@ public:
         }
         // В случае, если мы стоим в середине наших записей на диске, нам нужно сместить все записи от того места, куда мы будем писать
         else {
+            // Проверяем, есть ли место создания директории
+            if (STORAGE_SIZE - getFileSize() < sizeof(Module) + sizeof(AmountAndPreviousPosition)) {
+                cout << "Не хватает места для создания директории!" << endl;
+                return;
+            }
+            
             // Позиция, в которую мы будем писать
             int whereToWrite = beginning + sizeof(AmountAndPreviousPosition) + pAa.amount * sizeof(Module) + getSizeOfAllFilesInDirectory(beginning);
             
@@ -994,13 +1084,11 @@ public:
                 Module newDirectory;
                 newDirectory = createDirectory(getFileSize() + sizeof(Module));
                 
-                
                 if (isUnique(beginning, directory, newDirectory) == false) {
                     cout << "Не могу создать директорию, т.к. директория с таким именем существует! Попробуйте ещё раз." << endl;
                     return;
                     
                 }
-                
                 
                 // Для начала требуется переписать адреса
                 int startPoint = sizeof(int);
@@ -1080,10 +1168,14 @@ public:
             
             // В случае, если мы создаём файл
             } else {
+                if (STORAGE_SIZE - getFileSize() <= sizeof(Module)) {
+                    cout << "Не хватает места для создания файла!" << endl;
+                    return;
+                }
+                
                 // Позиция, в которую мы будем писать
                 Module newFile;
-                newFile = createFile();
-                
+                newFile = createFile(newFileMode);
                 
                 if (isUnique(beginning, file, newFile) == false) {
                     cout << "Не могу создать файл, т.к. файл с таким именем существует! Попробуйте ещё раз." << endl;
@@ -1091,12 +1183,21 @@ public:
                     
                 }
                 
-                
                 string contentOfTheNewFile;
                 cout << "Введите содержимое файла:" << endl;
                 getchar();
                 string content;
                 getline(cin, contentOfTheNewFile);
+                
+                if (STORAGE_SIZE - getFileSize() < sizeof(Module) + content.length()) {
+                    cout << "Не хватает места для создания файла! Файл будет обрезан." << endl;
+                    
+                    while (content.length() > STORAGE_SIZE - getFileSize() - sizeof(Module)) {
+                        content.pop_back();
+                    }
+                    
+                }
+                
                 newFile.fileSize = (int)contentOfTheNewFile.length();
                 
                 // На это расстояние нужно переписать содержимое диска от точки записи
